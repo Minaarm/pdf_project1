@@ -27,21 +27,23 @@ def upload_pdf():
     file = request.files['file']
     if file.filename == '':
         return jsonify({'message': 'No selected file'}), 400
+    
+    # Save the uploaded file
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+    file.save(file_path)
+    
+    # Extract text from the uploaded PDF
+    text_content = extract_text(file_path)  # Call the function to extract text
 
-    if file:
-        # Save PDF
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-        file.save(file_path)
+    # Save to the database
+    pdf_data = PDFData(file_name=file.filename, text_content=text_content)
+    db.session.add(pdf_data)
+    db.session.commit()
 
-        # Extract text from PDF
-        text_content = extract_text(file_path)
-
-        # Save to database
-        pdf_data = PDFData(file_name=file.filename, text_content=text_content)
-        db.session.add(pdf_data)
-        db.session.commit()
-
-        return jsonify({'message': 'File uploaded and processed successfully'}), 200
+    return jsonify({
+        'message': 'File uploaded and processed successfully',
+        'extracted_text': text_content  # Include the extracted text in the response
+    }), 200
 
 # Function to extract text using PyPDF2
 def extract_text(file_path):
@@ -50,18 +52,31 @@ def extract_text(file_path):
         text = ""
         for page in reader.pages:
             text += page.extract_text()
+    
+    # Add a fallback message if no text is extracted
+    if not text.strip():
+        text = "No text content could be extracted from this PDF."
+    
     return text
 
 # Endpoint to search PDFs
 @app.route('/search', methods=['GET'])
 def search_pdfs():
     query = request.args.get('query', '')
+    limit = int(request.args.get('limit', 10))  # Default limit is 10
+    offset = int(request.args.get('offset', 0))  # Default offset is 0
+    
     if not query:
         return jsonify({'message': 'Please provide a search query'}), 400
 
-    results = PDFData.query.filter(PDFData.text_content.ilike(f'%{query}%')).all()
+    results = PDFData.query.filter(PDFData.text_content.ilike(f'%{query}%')).limit(limit).offset(offset).all()
 
-    result_list = [{'file_name': pdf.file_name, 'upload_date': pdf.upload_date} for pdf in results]
+    # Add a snippet of matching text to each result
+    result_list = [{
+        'file_name': pdf.file_name,
+        'upload_date': pdf.upload_date,
+        'snippet': pdf.text_content[:100]  # First 100 characters as a preview
+    } for pdf in results]
 
     return jsonify({'results': result_list}), 200
 
